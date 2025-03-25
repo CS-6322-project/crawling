@@ -1,2 +1,4 @@
 test_39k.json filter=lfs diff=lfs merge=lfs -text
 output_98k.json filter=lfs diff=lfs merge=lfs -text
+*.json filter=lfs diff=lfs merge=lfs -text
+output_300k.zip filter=lfs diff=lfs merge=lfs -text
