@@ -4,3 +4,4 @@ output_98k.json filter=lfs diff=lfs merge=lfs -text
 output_300k.zip filter=lfs diff=lfs merge=lfs -text
 url_mapping_550k.zip filter=lfs diff=lfs merge=lfs -text
 output_550k.zip filter=lfs diff=lfs merge=lfs -text
+project_output_300k.zip filter=lfs diff=lfs merge=lfs -text
