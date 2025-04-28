@@ -10,9 +10,9 @@ import nltk
 nltk.download('stopwords')
 
 # Configuration
-OUTPUT_JSON = '../output_300k.json'
-URL_MAP_FILE = '../url_ids.jsonl'
-OUTPUT_FOLDER = 'project_output'
+OUTPUT_JSON = 'output_300k/output_300k.json'
+URL_MAP_FILE = 'output_300k/url_ids.jsonl'
+OUTPUT_FOLDER = 'project_output_5k'
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 # Initialization
@@ -58,6 +58,7 @@ with open(OUTPUT_JSON, 'r', encoding='utf-8') as f:
                 continue
             buffer = ""
 
+            #print(f"Processing record: {str(record.get('doc_id'))}")
             doc_id = str(record.get('url_id'))
             if not doc_id:
                 print(f"Skipping record due to missing url_id: {record}")
@@ -71,6 +72,8 @@ with open(OUTPUT_JSON, 'r', encoding='utf-8') as f:
 
             all_docs.add(doc_id)
             count += 1
+            
+            
             if count % 1000 == 0:
                 print(f"Processed {count} documents...")
 
@@ -79,15 +82,16 @@ with open(OUTPUT_JSON, 'r', encoding='utf-8') as f:
             for word in words:
                 if word not in stop_words:
                     stemmed = ps.stem(word)
-                    inverted_index[stemmed].append(doc_id)
+                    if doc_id not in inverted_index[stemmed]:
+                        inverted_index[stemmed].append(doc_id)
                     doc_term_freq[doc_id][stemmed] += 1
-
+                
             # Build web graph
             source_url = url_map.get(doc_id)
             if source_url:
                 for out_url in outlinks:
-                    if out_url in url_map.values():
-                        graph.add_edge(source_url, out_url)
+                    #if out_url in url_map.values():
+                    graph.add_edge(source_url, out_url)
 
 print(f"Documents processed: {len(all_docs)}")
 print(f"Graph nodes: {graph.number_of_nodes()}, edges: {graph.number_of_edges()}")
@@ -99,12 +103,23 @@ idf = {}
 
 for term in inverted_index:
     df = len(set(inverted_index[term]))
-    idf[term] = math.log(N / (1 + df))
+    #idf[term] = math.log(N / (1 + df))
+    idf[term] = math.log(N / df)
 
 for doc in doc_term_freq:
     for term in doc_term_freq[doc]:
         tf = 1 + math.log(doc_term_freq[doc][term])
         tf_idf[doc][term] = tf * idf[term]
+        
+for doc in doc_term_freq:
+    s = 0
+    for term in doc_term_freq[doc]:
+        s += tf_idf[doc][term] ** 2 
+    s = math.sqrt(s)
+    for term in doc_term_freq[doc]:
+        tf_idf[doc][term] = round(tf_idf[doc][term] / s, 5)
+
+        
 
 # =Page Rank and HITS
 print("Calculating PageRank & HITS...")

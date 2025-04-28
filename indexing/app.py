@@ -5,12 +5,13 @@ import math
 from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
 import nltk
+from collections import Counter
 nltk.download('stopwords')
 
 # === CONFIG ===
-INVERTED_INDEX_FILE = 'project_output/inverted_index.json'
-TF_IDF_FILE = 'project_output/tf_idf_scores.json'
-URL_MAP_FILE = '../url_ids.jsonl'  # (same as Museum_Indexing path!)
+INVERTED_INDEX_FILE = 'project_output_5k/inverted_index.json'
+TF_IDF_FILE = 'project_output_5k/tf_idf_scores.json'
+URL_MAP_FILE = 'output_300k/url_ids.jsonl'  # (same as Museum_Indexing path!)
 PAGERANK_FILE = 'project_output/pagerank_scores.json'
 
 # === LOAD FILES ===
@@ -43,15 +44,25 @@ ps = PorterStemmer()
 def rank_documents(query, top_k=10):
     query_terms = re.findall(r'\w+', query.lower())
     query_terms = [ps.stem(w) for w in query_terms if w not in stop_words]
+    print(f"Processed query terms: {query_terms}")
+    
+    terms_cnt = Counter(query_terms)
+    s = 0
+    for t in terms_cnt:
+        s = terms_cnt[t] ** 2
+    s = math.sqrt(s)
+    for t in terms_cnt:
+        terms_cnt[t] = terms_cnt[t] / s
+
 
     doc_scores = {}
 
-    for term in query_terms:
+    for term in terms_cnt:
         if term not in inverted_index:
             continue
         for doc_id in inverted_index[term]:
             doc_vector = tf_idf_scores.get(doc_id, {})
-            score = sum(doc_vector.get(t, 0) for t in query_terms)
+            score = sum(doc_vector.get(t, 0) * terms_cnt[t] for t in query_terms)
             doc_scores[doc_id] = doc_scores.get(doc_id, 0) + score
 
     # Optional: Boost using PageRank
@@ -79,6 +90,7 @@ def search():
     query = request.args.get("query", "")
     if not query:
         return jsonify({"error": "Query parameter is required"}), 400
+    print(f"Received query: {query}")
     results = rank_documents(query)
     return jsonify(results)
 
