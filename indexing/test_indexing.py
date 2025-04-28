@@ -9,13 +9,13 @@ from nltk.stem import PorterStemmer
 import nltk
 nltk.download('stopwords')
 
-# CONFIG
+# Configuration
 OUTPUT_JSON = 'test_data/test_pages.json'
 URL_MAP_FILE = 'test_data/test_url_ids.jsonl'
-OUTPUT_FOLDER = 'project_output'
+OUTPUT_FOLDER = 'test_project_output'
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# INITIALIZATION
+# Initialization
 inverted_index = defaultdict(list)
 doc_term_freq = defaultdict(lambda: defaultdict(int))
 tf_idf = defaultdict(lambda: defaultdict(float))
@@ -25,7 +25,7 @@ stop_words = set(stopwords.words('english'))
 url_map = {}
 all_docs = set()
 
-# Load URL map
+# Loading URL mapping
 print("Loading URL map from url_ids.jsonl...")
 with open(URL_MAP_FILE, 'r', encoding='utf-8') as f:
     for line in f:
@@ -33,63 +33,114 @@ with open(URL_MAP_FILE, 'r', encoding='utf-8') as f:
             data = json.loads(line)
             url_map[str(data['url_id'])] = data['url']
 
-# Parse test records
+# Build index and graphs
 print("Parsing records and building inverted index & web graph...")
+buffer = ""
+inside_object = False
+count = 0
 with open(OUTPUT_JSON, 'r', encoding='utf-8') as f:
-    records = json.load(f)
-
-    for record in records:
-        doc_id = str(record.get('url_id'))
-        content = record.get('text', '')
-        outlinks = record.get('outlinks', [])
-        if not doc_id or not content.strip():
+    for line in f:
+        line = line.strip()
+        if not line or line in ('[', ']', '],'):
             continue
 
-        all_docs.add(doc_id)
+        if line.startswith('{'):
+            buffer = line
+            inside_object = True
+        elif inside_object:
+            buffer += line
 
-        words = re.findall(r'\w+', content.lower())
-        for word in words:
-            if word not in stop_words:
-                stemmed = ps.stem(word)
-                inverted_index[stemmed].append(doc_id)
-                doc_term_freq[doc_id][stemmed] += 1
+        if line.endswith('},') or line.endswith('}'):
+            try:
+                record = json.loads(buffer.rstrip(',').strip())
+            except json.JSONDecodeError:
+                buffer = ""
+                continue
+            buffer = ""
 
-        source_url = url_map.get(doc_id)
-        if source_url:
-            for out_url in outlinks:
-                if out_url in url_map.values():
+            #print(f"Processing record: {str(record.get('doc_id'))}")
+            doc_id = str(record.get('url_id'))
+            if not doc_id:
+                print(f"Skipping record due to missing url_id: {record}")
+                continue
+
+            content = record.get('text') or record.get('content') or ''
+            outlinks = record.get('outlinks', [])
+
+            if not content.strip():
+                continue
+
+            all_docs.add(doc_id)
+            count += 1
+            
+            if count > 100000:
+                break
+            
+            if count % 1000 == 0:
+                print(f"Processed {count} documents...")
+
+            # Tokenize and build inverted index
+            words = re.findall(r'\w+', content.lower())
+            for word in words:
+                if word not in stop_words:
+                    stemmed = ps.stem(word)
+                    #if doc_id not in inverted_index[stemmed]:
+                    inverted_index[stemmed].append(doc_id)
+                    doc_term_freq[doc_id][stemmed] += 1
+                
+            # Build web graph
+            source_url = url_map.get(doc_id)
+            if source_url:
+                for out_url in outlinks:
+                    #if out_url in url_map.values():
                     graph.add_edge(source_url, out_url)
 
 print(f"Documents processed: {len(all_docs)}")
 print(f"Graph nodes: {graph.number_of_nodes()}, edges: {graph.number_of_edges()}")
 
-# TF-IDF
+# Calculating TF-IDF
 print("Calculating TF-IDF scores...")
 N = len(all_docs)
 idf = {}
+
 for term in inverted_index:
-    df = len(set(inverted_index[term]))
-    idf[term] = math.log(N / (1 + df))
+    inverted_index[term] = list(set(inverted_index[term]))
+    df = len(inverted_index[term])
+    #idf[term] = math.log(N / (1 + df))
+    idf[term] = math.log(N / df)
+
 for doc in doc_term_freq:
     for term in doc_term_freq[doc]:
         tf = 1 + math.log(doc_term_freq[doc][term])
         tf_idf[doc][term] = tf * idf[term]
+        
+for doc in doc_term_freq:
+    s = 0
+    for term in doc_term_freq[doc]:
+        s += tf_idf[doc][term] ** 2 
+    s = math.sqrt(s)
+    for term in doc_term_freq[doc]:
+        tf_idf[doc][term] = round(tf_idf[doc][term] / s, 5)
 
-# PageRank & HITS
+        
+
+# =Page Rank and HITS
 print("Calculating PageRank & HITS...")
 pagerank_scores = nx.pagerank(graph)
 hubs, authorities = nx.hits(graph, max_iter=50)
 
-# Save files
+# Output
 print("Saving output files...")
+
 with open(os.path.join(OUTPUT_FOLDER, 'inverted_index.json'), 'w') as f:
     json.dump(inverted_index, f)
 
 with open(os.path.join(OUTPUT_FOLDER, 'tf_idf_scores.json'), 'w') as f:
     json.dump(tf_idf, f)
 
+edges_list = [{"source": u, "target": v} for u, v in graph.edges()]
 with open(os.path.join(OUTPUT_FOLDER, 'web_graph_edges.json'), 'w') as f:
-    json.dump([{"source": u, "target": v} for u, v in graph.edges()], f)
+    json.dump(edges_list, f)
 
 with open(os.path.join(OUTPUT_FOLDER, 'pagerank_scores.json'), 'w') as f:
     json.dump(pagerank_scores, f)
@@ -97,4 +148,4 @@ with open(os.path.join(OUTPUT_FOLDER, 'pagerank_scores.json'), 'w') as f:
 with open(os.path.join(OUTPUT_FOLDER, 'hits_scores.json'), 'w') as f:
     json.dump({"hubs": hubs, "authorities": authorities}, f)
 
-print("✅ Mini Indexing & Ranking complete. Outputs saved in 'project_output/' folder.")
+print("Indexing & Ranking complete. All outputs saved in 'project_output/' folder.")

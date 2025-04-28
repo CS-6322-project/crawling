@@ -12,7 +12,7 @@ nltk.download('stopwords')
 INVERTED_INDEX_FILE = 'project_output_5k/inverted_index.json'
 TF_IDF_FILE = 'project_output_5k/tf_idf_scores.json'
 URL_MAP_FILE = 'output_300k/url_ids.jsonl'  # (same as Museum_Indexing path!)
-PAGERANK_FILE = 'project_output/pagerank_scores.json'
+PAGERANK_FILE = 'project_output_5k/pagerank_scores.json'
 
 # === LOAD FILES ===
 print("Loading inverted index and tf-idf scores...")
