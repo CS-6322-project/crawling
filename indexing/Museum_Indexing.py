@@ -73,6 +73,8 @@ with open(OUTPUT_JSON, 'r', encoding='utf-8') as f:
             all_docs.add(doc_id)
             count += 1
             
+            if count > 100000:
+                break
             
             if count % 1000 == 0:
                 print(f"Processed {count} documents...")
@@ -82,8 +84,8 @@ with open(OUTPUT_JSON, 'r', encoding='utf-8') as f:
             for word in words:
                 if word not in stop_words:
                     stemmed = ps.stem(word)
-                    if doc_id not in inverted_index[stemmed]:
-                        inverted_index[stemmed].append(doc_id)
+                    #if doc_id not in inverted_index[stemmed]:
+                    inverted_index[stemmed].append(doc_id)
                     doc_term_freq[doc_id][stemmed] += 1
                 
             # Build web graph
@@ -102,7 +104,8 @@ N = len(all_docs)
 idf = {}
 
 for term in inverted_index:
-    df = len(set(inverted_index[term]))
+    inverted_index[term] = list(set(inverted_index[term]))
+    df = len(inverted_index[term])
     #idf[term] = math.log(N / (1 + df))
     idf[term] = math.log(N / df)
 
