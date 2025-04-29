@@ -12,9 +12,9 @@ from sklearn.metrics.pairwise import cosine_similarity
 import nltk
 
 nltk.download('stopwords', quiet=True)
-
+DATA_FOLDER = "indexing/project_output"
 class SearchEngine:
-    def __init__(self, data_folder="indexing/project_output"):
+    def __init__(self, data_folder=DATA_FOLDER):
         # Initialize the Porter Stemmer and stopwords
         self.ps = PorterStemmer()
         self.stop_words = set(stopwords.words('english'))
@@ -29,7 +29,7 @@ class SearchEngine:
         self.relevance_feedback = {}
         
         # For association clusters
-        self.term_co_occurrence = self._build_term_co_occurrence()
+        self.term_co_occurrence = None  
         
         # Pre-computed clusters (will be initialized on first use)
         self.document_vectors = None
@@ -69,7 +69,7 @@ class SearchEngine:
         self.reverse_url_map = {}
         
         # Try to find either url_ids.jsonl or test_url_ids.jsonl
-        url_map_files = ['url_ids.jsonl', 'indexing/test_data/test_url_ids.jsonl']
+        url_map_files = ['url_ids.jsonl']
         
         for url_file in url_map_files:
             if os.path.exists(url_file):
@@ -166,19 +166,54 @@ class SearchEngine:
             return 0.0
     
     def _build_term_co_occurrence(self):
-        """Build term co-occurrence matrix for association clusters"""
+        """Build term co-occurrence matrix for association clusters (optimized version)"""
         print("Building term co-occurrence matrix for association clusters...")
         co_occurrence = defaultdict(Counter)
         
-        # Iterate through documents to count term co-occurrences
-        for doc_id in self.tf_idf:
-            terms = list(self.tf_idf[doc_id].keys())
-            for i, term1 in enumerate(terms):
-                for term2 in terms[i+1:]:
+        # Get top 5000 most common terms to limit matrix size (significantly improves performance)
+        term_doc_frequency = Counter()
+        for term, doc_list in self.inverted_index.items():
+            term_doc_frequency[term] = len(set(doc_list))
+        
+        common_terms = set([term for term, _ in term_doc_frequency.most_common(5000)])
+        
+        # Sample a subset of documents (10%) for large datasets
+        doc_count = len(self.tf_idf)
+        sample_size = min(3000, doc_count)  # Cap at 3000 documents or fewer
+        sample_ratio = sample_size / doc_count
+        
+        if doc_count > 10000:  # Only sample for large datasets
+            print(f"Using {sample_size} documents ({sample_ratio:.1%} sample) for co-occurrence matrix")
+            doc_ids = random.sample(list(self.tf_idf.keys()), sample_size)
+        else:
+            doc_ids = list(self.tf_idf.keys())
+        
+        # Process documents with optimization for large documents
+        for i, doc_id in enumerate(doc_ids):
+            if i % 1000 == 0 and i > 0:
+                print(f"Processed {i}/{len(doc_ids)} documents for co-occurrence matrix...")
+            
+            # Get terms from the document, filtering to common terms only
+            doc_terms = [term for term in self.tf_idf[doc_id].keys() if term in common_terms]
+            
+            # Limit terms per document to avoid quadratic explosion
+            if len(doc_terms) > 100:
+                doc_terms = random.sample(doc_terms, 100)
+            
+            # Build co-occurrence counts
+            for i, term1 in enumerate(doc_terms):
+                for term2 in doc_terms[i+1:]:
                     co_occurrence[term1][term2] += 1
                     co_occurrence[term2][term1] += 1
         
+        print("Co-occurrence matrix built.")
         return co_occurrence
+    
+    def _get_term_co_occurrence(self):
+        """Lazy loading of the term co-occurrence matrix"""
+        if self.term_co_occurrence is None:
+            self.term_co_occurrence = self._build_term_co_occurrence()
+        return self.term_co_occurrence
     
     def _create_document_vectors(self):
         """Create vector representation of documents for clustering"""
@@ -291,14 +326,17 @@ class SearchEngine:
         
         This method finds terms that frequently co-occur with query terms
         """
+        # Lazy load the co-occurrence matrix
+        term_co_occurrence = self._get_term_co_occurrence()
+        
         query_tokens = self.preprocess_query(query_text)
         expansion_terms = Counter()
         
         # For each query term, find associated terms
         for term in query_tokens:
-            if term in self.term_co_occurrence:
+            if term in term_co_occurrence:
                 # Get top co-occurring terms
-                for related_term, count in self.term_co_occurrence[term].most_common(5):
+                for related_term, count in term_co_occurrence[term].most_common(5):
                     if related_term not in query_tokens:
                         expansion_terms[related_term] += count
         
@@ -449,35 +487,50 @@ class SearchEngine:
             return self.preprocess_query(query_text)
     
     def rank_results(self, matching_docs, query_vector, method="combined"):
-        """Rank matching documents based on specified method"""
+        """Rank matching documents based on specified method (optimized)"""
         scores = {}
         
+        # Pre-fetch all URLs for matching docs at once to avoid repeated lookups
+        doc_urls = {}
+        if method == "pagerank" or method == "hits" or method == "combined":
+            for doc_id in matching_docs:
+                doc_urls[doc_id] = self.url_map.get(doc_id, "")
+        
+        # TF-IDF ranking
         if method == "tfidf" or method == "combined":
             # Calculate TF-IDF similarity scores
             for doc_id in matching_docs:
                 scores[doc_id] = self.calculate_cosine_similarity(query_vector, doc_id)
         
+        # PageRank ranking
         if method == "pagerank" or method == "combined":
-            # Incorporate PageRank scores
-            for doc_id in matching_docs:
-                url = self.url_map.get(doc_id, "")
+            # Look up pagerank scores
+            pagerank_scores = {}
+            for doc_id, url in doc_urls.items():
                 if url in self.pagerank:
-                    pagerank_score = self.pagerank[url]
-                    if method == "pagerank":
-                        scores[doc_id] = pagerank_score
-                    else:  # combined
-                        scores[doc_id] = scores.get(doc_id, 0) * 0.7 + pagerank_score * 0.3
+                    pagerank_scores[doc_id] = self.pagerank[url]
+            
+            # Apply PageRank scores
+            for doc_id, pagerank_score in pagerank_scores.items():
+                if method == "pagerank":
+                    scores[doc_id] = pagerank_score
+                else:  # combined
+                    scores[doc_id] = scores.get(doc_id, 0) * 0.7 + pagerank_score * 0.3
         
+        # HITS ranking
         if method == "hits" or method == "combined":
-            # Incorporate HITS authority scores
-            for doc_id in matching_docs:
-                url = self.url_map.get(doc_id, "")
+            # Look up authority scores
+            authority_scores = {}
+            for doc_id, url in doc_urls.items():
                 if url in self.authorities:
-                    auth_score = self.authorities[url]
-                    if method == "hits":
-                        scores[doc_id] = auth_score
-                    else:  # combined
-                        scores[doc_id] = scores.get(doc_id, 0) * 0.8 + auth_score * 0.2
+                    authority_scores[doc_id] = self.authorities[url]
+            
+            # Apply authority scores
+            for doc_id, auth_score in authority_scores.items():
+                if method == "hits":
+                    scores[doc_id] = auth_score
+                else:  # combined
+                    scores[doc_id] = scores.get(doc_id, 0) * 0.8 + auth_score * 0.2
         
         # Sort by score in descending order
         ranked_results = [(doc_id, scores.get(doc_id, 0)) for doc_id in matching_docs]
