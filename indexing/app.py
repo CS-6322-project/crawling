@@ -1,26 +1,31 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import json
-import math
 import re
-from collections import defaultdict, Counter
-from nltk.corpus import stopwords
+import math
+from collections import Counter
 from nltk.stem import PorterStemmer
+from nltk.corpus import stopwords
 import nltk
+import sys
+import os
 
-nltk.download('stopwords')
+from search_engine import SearchEngine
+
+nltk.download('stopwords', quiet=True)
 
 # ==== CONFIG ====
-INVERTED_INDEX_FILE = 'project_output/inverted_index.json'
-TF_IDF_FILE = 'project_output/tf_idf_scores.json'
+INVERTED_INDEX_FILE = 'project_output_test/5k_result/inverted_index.json'
+TF_IDF_FILE = 'project_output_test/5k_result/tf_idf_scores.json'
 URL_MAP_FILE = 'output_300k/url_ids.jsonl'
-PAGERANK_FILE = 'project_output/pagerank_scores.json'
+PAGERANK_FILE = 'project_output_test/5k_result/pagerank_scores.json'
 
 # ==== INIT ====
 app = Flask(__name__)
 CORS(app)
 ps = PorterStemmer()
 stop_words = set(stopwords.words('english'))
+search_engine = SearchEngine()
 
 # ==== LOAD FILES ====
 with open(INVERTED_INDEX_FILE) as f:
@@ -72,6 +77,7 @@ def rank_documents(query, top_k=10):
     return results
 
 # ==== ROUTES ====
+
 @app.route('/search', methods=['GET'])
 def search():
     query = request.args.get('query', "")
@@ -82,36 +88,63 @@ def search():
     results = rank_documents(query)
     return jsonify(results)
 
-@app.route('/rocchio', methods=['POST'])
-def rocchio():
-    data = request.get_json()
-    relevant = data.get('relevant', [])
-    non_relevant = data.get('non_relevant', [])
-    query = data.get('query', "")
-
-    expanded_terms = ["expanded", "dummy", "terms"]
-    return jsonify({"query": query, "expanded_terms": expanded_terms})
-
-# ==== DUMMY ENDPOINTS ====
 @app.route('/pagerank', methods=['GET'])
 def pagerank_endpoint():
-    return jsonify({"method": "PageRank", "status": "dummy response"})
+    query = request.args.get('query', "")
+    if not query:
+        return jsonify({"error": "Query is required"}), 400
+    results, _ = search_engine.search(query, ranking_method="pagerank")
+    return jsonify(results)
 
 @app.route('/hits', methods=['GET'])
 def hits_endpoint():
-    return jsonify({"method": "HITS", "status": "dummy response"})
+    query = request.args.get('query', "")
+    if not query:
+        return jsonify({"error": "Query is required"}), 400
+    results, _ = search_engine.search(query, ranking_method="hits")
+    return jsonify(results)
 
 @app.route('/association', methods=['GET'])
 def association_endpoint():
-    return jsonify({"method": "Association Clustering", "status": "dummy response"})
+    query = request.args.get('query', "")
+    if not query:
+        return jsonify({"error": "Query is required"}), 400
+    results, _ = search_engine.search(query, expansion_method="association")
+    return jsonify(results)
 
 @app.route('/metric', methods=['GET'])
 def metric_endpoint():
-    return jsonify({"method": "Metric Clustering", "status": "dummy response"})
+    query = request.args.get('query', "")
+    if not query:
+        return jsonify({"error": "Query is required"}), 400
+    results, _ = search_engine.search(query, expansion_method="metric")
+    return jsonify(results)
 
 @app.route('/scalar', methods=['GET'])
 def scalar_endpoint():
-    return jsonify({"method": "Scalar Clustering", "status": "dummy response"})
+    query = request.args.get('query', "")
+    if not query:
+        return jsonify({"error": "Query is required"}), 400
+    results, _ = search_engine.search(query, expansion_method="scalar")
+    return jsonify(results)
+
+@app.route('/rocchio', methods=['POST'])
+def rocchio():
+    data = request.get_json()
+    query = data.get('query', "")
+    relevant = data.get('relevant', [])
+    non_relevant = data.get('non_relevant', [])
+
+    if not query:
+        return jsonify({"error": "Query is required"}), 400
+
+    results, _ = search_engine.search(
+        query_text=query,
+        expansion_method="rocchio",
+        relevant_docs=relevant,
+        non_relevant_docs=non_relevant
+    )
+    return jsonify(results)
 
 # ==== MAIN ====
 if __name__ == '__main__':
